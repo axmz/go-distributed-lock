@@ -1,0 +1,39 @@
+version: '3.9'
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    tmpfs:
+      - /data
+
+  app:
+    image: axmz/distrilock:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    deploy:
+      replicas: 5
+    develop:
+      watch:
+        - action: sync
+          path: ./
+          target: /app
+          ignore:
+            - .git/
+        - action: rebuild
+          path: go.mod
+        - action: rebuild
+          path: go.sum
+        - action: rebuild
+          path: ./cmd/distrilock/main.go
+        - action: rebuild
+          path: .env
+        # - action: restart
+        #   path: .env

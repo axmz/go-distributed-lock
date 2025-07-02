@@ -1,0 +1,14 @@
+apiVersion: v1
+data:
+  ENVIRONMENT: k8s
+  BACKOFF_BASE: 0ms
+  ITERATIONS: "5000"
+  LOCK_EXPIRY: 5s
+  LOCK_TYPE: 'naive' # naive, redislock
+  MAX_JITTER: 0ms
+  REDIS_ADDR: redis:6379
+  SIMULATE_WORK_TIME: 0ms
+kind: ConfigMap
+metadata:
+  creationTimestamp: null
+  name: distrilock-env
