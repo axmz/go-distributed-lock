@@ -7,10 +7,15 @@ import (
 	"time"
 
 	"github.com/axmz/go-distributed-lock/pkg/config"
+	redisClient "github.com/axmz/go-distributed-lock/pkg/redis"
+
+	pb "github.com/axmz/go-distributed-lock/proto/report"
 	"github.com/bsm/redislock"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -34,8 +39,9 @@ type cfg struct {
 	LockExpiry       time.Duration
 }
 
-func redisLock(ctx context.Context, id string, cfg cfg) {
+func redisLock(ctx context.Context, id string, cfg cfg) int64 {
 	locker := redislock.New(cfg.RedicClient)
+	var lastSeen int64
 
 	for range cfg.Iterations {
 		var lock *redislock.Lock
@@ -60,13 +66,17 @@ func redisLock(ctx context.Context, id string, cfg cfg) {
 		time.Sleep(cfg.SimulateWorkTime)
 
 		log.Printf("%v, Incremented counter: %d", id, val)
+		lastSeen = val
 
 		lock.Release(ctx)
 	}
 
+	return lastSeen
 }
 
-func naiveRedisLock(ctx context.Context, id string, cfg cfg) {
+func naiveRedisLock(ctx context.Context, id string, cfg cfg) int64 {
+	var lastSeen int64
+
 	for range cfg.Iterations {
 		// Try to acquire the lock, waiting until it's available
 		for {
@@ -91,6 +101,7 @@ func naiveRedisLock(ctx context.Context, id string, cfg cfg) {
 		// Simulate work
 		time.Sleep(cfg.SimulateWorkTime)
 
+		lastSeen = val
 		// Release the lock only if we still own it
 		v, err := cfg.RedicClient.Get(ctx, lockKey).Result()
 		if err == nil && v == id {
@@ -98,6 +109,7 @@ func naiveRedisLock(ctx context.Context, id string, cfg cfg) {
 			cfg.RedicClient.Del(ctx, lockKey)
 		}
 	}
+	return lastSeen
 }
 
 func main() {
@@ -120,13 +132,11 @@ func main() {
 	var simulateWorkTime = config.GetEnvDuration("SIMULATE_WORK_TIME", 100*time.Millisecond)
 	var lockExpiry = config.GetEnvDuration("LOCK_EXPIRY", 5000*time.Microsecond)
 
-	client := redis.NewClient(&redis.Options{
-		Addr: redisAddr,
-	})
+	rc := redisClient.Init()
 
 	cfg := cfg{
 		RedisAddr:        redisAddr,
-		RedicClient:      client,
+		RedicClient:      rc,
 		LockType:         lockType,
 		Iterations:       iterations,
 		BackoffBase:      backoffBase,
@@ -137,9 +147,22 @@ func main() {
 
 	id := uuid.New().String()
 
+	var lastSeen int64
 	if lockType == "naive" {
-		naiveRedisLock(ctx, id, cfg)
+		lastSeen = naiveRedisLock(ctx, id, cfg)
 	} else {
-		redisLock(ctx, id, cfg)
+		lastSeen = redisLock(ctx, id, cfg)
 	}
+
+	conn, err := grpc.NewClient("verifier:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("Failed to connect to verifier: %v", err)
+	}
+	defer conn.Close()
+	c := pb.NewReporterClient(conn)
+	_, err = c.ReportFinal(ctx, &pb.FinalCount{Id: id, Value: lastSeen})
+	if err != nil {
+		log.Fatalf("Failed to report final value: %v", err)
+	}
+	log.Printf("Reported final value %d to verifier", lastSeen)
 }

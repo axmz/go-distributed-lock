@@ -13,7 +13,7 @@ services:
     image: axmz/distrilock:latest
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.distrilock
     env_file:
       - .env
     depends_on:
@@ -35,5 +35,28 @@ services:
           path: ./cmd/distrilock/main.go
         - action: rebuild
           path: .env
-        # - action: restart
-        #   path: .env
+        - action: rebuild
+          path: ./cmd/verifier/main.go
+
+  verifier:
+    image: axmz/verifier:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.verifier
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    develop:
+      watch:
+        - action: sync
+          path: ./
+          target: /app
+          ignore:
+            - .git/
+        - action: rebuild
+          path: go.mod
+        - action: rebuild
+          path: go.sum
+        - action: rebuild
+          path: ./cmd/verifier/main.go
