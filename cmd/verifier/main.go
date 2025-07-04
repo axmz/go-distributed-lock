@@ -6,25 +6,28 @@ import (
 	"log"
 	"net"
 	"sync"
-	"time"
 
+	"github.com/axmz/go-distributed-lock/pkg/config"
 	redisClient "github.com/axmz/go-distributed-lock/pkg/redis"
 	pb "github.com/axmz/go-distributed-lock/proto/report"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
-type server struct {
+type reporterServer struct {
 	pb.UnimplementedReporterServer
 	mu      sync.Mutex
-	results map[string]int64
+	results map[string]int
 	expect  int
 	done    chan struct{}
 }
 
-func (s *server) ReportFinal(ctx context.Context, in *pb.FinalCount) (*pb.Ack, error) {
+func (s *reporterServer) ReportFinal(ctx context.Context, in *pb.FinalCount) (*pb.Ack, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.results[in.Id] = in.Value
+	s.results[in.Id] = int(in.Value)
+	log.Printf("Received report from %s: %d", in.Id, in.Value)
 	if len(s.results) >= s.expect {
 		select {
 		case s.done <- struct{}{}:
@@ -35,50 +38,54 @@ func (s *server) ReportFinal(ctx context.Context, in *pb.FinalCount) (*pb.Ack, e
 }
 
 func main() {
-	expect := 5 // TODO: get from env
-	s := &server{
-		results: make(map[string]int64),
-		expect:  expect,
+	cfg := config.Init()
+	rc := redisClient.Init(cfg.RedisAddr)
+	grpcServer := grpc.NewServer()
+
+	// Init Reporter Server
+	rs := &reporterServer{
+		results: make(map[string]int),
+		expect:  cfg.Replicas,
 		done:    make(chan struct{}, 1),
 	}
+	pb.RegisterReporterServer(grpcServer, rs)
 
-	lis, err := net.Listen("tcp", ":50051") // gRPC server port
+	// Init Health Server
+	healthServer := health.NewServer()
+	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	healthpb.RegisterHealthServer(grpcServer, healthServer)
+
+	lis, err := net.Listen("tcp", cfg.VerifierPort)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
-	pb.RegisterReporterServer(grpcServer, s)
 	go grpcServer.Serve(lis)
-	log.Println("Verifier gRPC server started on :50051")
+	log.Println("Verifier gRPC server started on ", cfg.VerifierPort)
 
-	// Wait for all results or timeout
-	select {
-	case <-s.done:
-		log.Println("All results received")
-		// TODO: start timeout countdown after first result, then implement a heartbeat mechanism
-	case <-time.After(10 * time.Second):
-		log.Println("Timeout waiting for results")
-	}
+	<-rs.done
+	log.Println("All results received")
 
-	// Compare with Redis
-	rc := redisClient.Init()
-	redisVal, err := rc.Get(context.Background(), "counter").Int64()
+	// Get Redis Last Counter Value
+	redisVal, err := rc.Get(context.Background(), "counter").Int()
 	if err != nil {
 		log.Fatalf("Failed to get counter from Redis: %v", err)
 	}
 
-	// Find max
-	var maxVal int64
-	for _, v := range s.results {
+	// Find Max Reported Counter Value
+	var maxVal int
+	for _, v := range rs.results {
 		if v > maxVal {
 			maxVal = v
 		}
 	}
 
-	fmt.Printf("Max reported: %d, Redis counter: %d\n", maxVal, redisVal)
-	// TODO: check also if equal with expected value
-	if maxVal == redisVal {
+	// Calc Expected Counter Value
+	expected := cfg.Replicas * cfg.Iterations
+
+	fmt.Printf("Max reported: %d, Redis counter: %d, Expected counter: %d\n", maxVal, redisVal, expected)
+
+	if maxVal == redisVal && maxVal == expected {
 		fmt.Println("SUCCESS: No race conditions detected.")
 	} else {
 		fmt.Println("FAILURE: Race condition detected!")

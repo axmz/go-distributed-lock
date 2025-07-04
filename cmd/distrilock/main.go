@@ -2,20 +2,21 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
 
 	"github.com/axmz/go-distributed-lock/pkg/config"
 	redisClient "github.com/axmz/go-distributed-lock/pkg/redis"
+	"github.com/redis/go-redis/v9"
 
 	pb "github.com/axmz/go-distributed-lock/proto/report"
 	"github.com/bsm/redislock"
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
-	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 const (
@@ -24,23 +25,15 @@ const (
 )
 
 func backoffWithJitter(base time.Duration, maxJitter time.Duration) time.Duration {
+	if maxJitter <= 0 {
+		return base
+	}
 	jitter := time.Duration(rand.Int63n(int64(maxJitter)))
 	return base + jitter
 }
 
-type cfg struct {
-	RedisAddr        string
-	RedicClient      *redis.Client
-	LockType         string
-	Iterations       int
-	BackoffBase      time.Duration
-	MaxJitter        time.Duration
-	SimulateWorkTime time.Duration
-	LockExpiry       time.Duration
-}
-
-func redisLock(ctx context.Context, id string, cfg cfg) int64 {
-	locker := redislock.New(cfg.RedicClient)
+func redisLock(ctx context.Context, id string, rc *redis.Client, cfg config.Config) int64 {
+	locker := redislock.New(rc)
 	var lastSeen int64
 
 	for range cfg.Iterations {
@@ -58,7 +51,7 @@ func redisLock(ctx context.Context, id string, cfg cfg) int64 {
 			break
 		}
 
-		val, err := cfg.RedicClient.Incr(ctx, counterKey).Result()
+		val, err := rc.Incr(ctx, counterKey).Result()
 		if err != nil {
 			log.Fatalf("Could not increment counter: %v", err)
 		}
@@ -74,13 +67,13 @@ func redisLock(ctx context.Context, id string, cfg cfg) int64 {
 	return lastSeen
 }
 
-func naiveRedisLock(ctx context.Context, id string, cfg cfg) int64 {
+func naiveRedisLock(ctx context.Context, id string, rc *redis.Client, cfg config.Config) int64 {
 	var lastSeen int64
 
 	for range cfg.Iterations {
 		// Try to acquire the lock, waiting until it's available
 		for {
-			ok, err := cfg.RedicClient.SetNX(ctx, lockKey, id, cfg.LockExpiry).Result()
+			ok, err := rc.SetNX(ctx, lockKey, id, cfg.LockExpiry).Result()
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -92,7 +85,7 @@ func naiveRedisLock(ctx context.Context, id string, cfg cfg) int64 {
 		}
 
 		// Critical section: safely increment the counter
-		val, err := cfg.RedicClient.Incr(ctx, counterKey).Result()
+		val, err := rc.Incr(ctx, counterKey).Result()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -103,66 +96,64 @@ func naiveRedisLock(ctx context.Context, id string, cfg cfg) int64 {
 
 		lastSeen = val
 		// Release the lock only if we still own it
-		v, err := cfg.RedicClient.Get(ctx, lockKey).Result()
+		v, err := rc.Get(ctx, lockKey).Result()
 		if err == nil && v == id {
 			log.Printf("%v, Release the lock: %d", id, val)
-			cfg.RedicClient.Del(ctx, lockKey)
+			rc.Del(ctx, lockKey)
 		}
 	}
 	return lastSeen
 }
 
+func ConnectAfterVerifierReady(address string) (*grpc.ClientConn, error) {
+	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to verifier at %s: %v", address, err)
+	}
+	healthClient := healthpb.NewHealthClient(conn)
+
+	for range 10 { // TODO: define max attempts
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // TODO: define timeouts
+		defer cancel()
+		resp, healthErr := healthClient.Check(ctx, &healthpb.HealthCheckRequest{})
+		if healthErr == nil && resp.GetStatus() == healthpb.HealthCheckResponse_SERVING {
+			return conn, nil
+		}
+		log.Printf("Waiting for verifier at %s...", address)
+		time.Sleep(1 * time.Second)
+	}
+
+	return nil, fmt.Errorf("verifier at %s is not ready after 10 attempts", address)
+}
+
 func main() {
 	var ctx = context.Background()
 
-	var env = config.GetEnv("ENVIRONMENT", "local")
-	switch env {
-	case "local":
-		_ = godotenv.Overload()
-	case "k8s":
-		_ = godotenv.Load()
-	default:
-		log.Fatalf("Unknown environment: %s", env)
-	}
-	var redisAddr = config.GetEnv("REDIS_ADDR", "redis:6379")
-	var lockType = config.GetEnv("LOCK_TYPE", "redislock") // "naive" or "redislock"
-	var iterations = config.GetEnvInt("ITERATIONS", 1000)
-	var backoffBase = config.GetEnvDuration("BACKOFF_BASE", 50*time.Millisecond)
-	var maxJitter = config.GetEnvDuration("MAX_JITTER", 100*time.Millisecond)
-	var simulateWorkTime = config.GetEnvDuration("SIMULATE_WORK_TIME", 100*time.Millisecond)
-	var lockExpiry = config.GetEnvDuration("LOCK_EXPIRY", 5000*time.Microsecond)
+	cfg := config.Init()
 
-	rc := redisClient.Init()
+	rc := redisClient.Init(cfg.RedisAddr)
 
-	cfg := cfg{
-		RedisAddr:        redisAddr,
-		RedicClient:      rc,
-		LockType:         lockType,
-		Iterations:       iterations,
-		BackoffBase:      backoffBase,
-		MaxJitter:        maxJitter,
-		SimulateWorkTime: simulateWorkTime,
-		LockExpiry:       lockExpiry,
+	conn, err := ConnectAfterVerifierReady(cfg.VerifierAddr)
+	if err != nil {
+		log.Fatal(err.Error())
 	}
+	defer conn.Close()
+
+	c := pb.NewReporterClient(conn)
 
 	id := uuid.New().String()
 
 	var lastSeen int64
-	if lockType == "naive" {
-		lastSeen = naiveRedisLock(ctx, id, cfg)
+	if cfg.LockType == "naive" {
+		lastSeen = naiveRedisLock(ctx, id, rc, cfg)
 	} else {
-		lastSeen = redisLock(ctx, id, cfg)
+		lastSeen = redisLock(ctx, id, rc, cfg)
 	}
 
-	conn, err := grpc.NewClient("verifier:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatalf("Failed to connect to verifier: %v", err)
-	}
-	defer conn.Close()
-	c := pb.NewReporterClient(conn)
 	_, err = c.ReportFinal(ctx, &pb.FinalCount{Id: id, Value: lastSeen})
 	if err != nil {
 		log.Fatalf("Failed to report final value: %v", err)
 	}
+
 	log.Printf("Reported final value %d to verifier", lastSeen)
 }

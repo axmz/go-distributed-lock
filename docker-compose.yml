@@ -18,6 +18,7 @@ services:
       - .env
     depends_on:
       - redis
+      - verifier
     deploy:
       replicas: 5
     develop:

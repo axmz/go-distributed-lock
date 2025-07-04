@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: verifier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: verifier
+  template:
+    metadata:
+      labels:
+        app: verifier
+    spec:
+      containers:
+        - name: verifier
+          image: axmz/verifier:latest
+          ports:
+            - containerPort: 50051
+          envFrom:
+            - configMapRef:
+                name: distrilock-env
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: verifier
+spec:
+  ports:
+    - port: 50051
+  selector:
+    app: verifier

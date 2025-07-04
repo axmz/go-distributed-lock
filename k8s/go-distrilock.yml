@@ -13,7 +13,6 @@ spec:
       containers:
         - name: distrilock
           image: axmz/distrilock:latest
-          imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
                 name: distrilock-env

@@ -1,27 +1,29 @@
-.PHONY: up build watch scale k8s-apply install-protoc
+.PHONY: build watch ka kd kc kl install-protoc
 
 build:
 	docker compose build
 
-up:
-	docker compose up -d
-
 watch:
-	docker compose watch
+	docker compose up --scale app=5 --watch
 
-scale:
-	docker compose up -d --scale app=5
+dev: build watch
 
-dev: build up scale watch
+ka:
+	kubectl apply -f k8s/configmap.yaml
+	kubectl apply -f k8s/redis.yml
+	kubectl wait --for=condition=ready pod -l app=redis --timeout=60s
+	kubectl apply -f k8s/go-verifier.yml
+	kubectl wait --for=condition=ready pod -l app=verifier --timeout=60s
+	kubectl apply -f k8s/go-distrilock.yml
 
-k8s-apply:
-	kubectl apply -f k8s/
-
-k8s-delete:
+kd:
 	kubectl delete -f k8s/
 
-k8s-configmap:
+kc:
 	kubectl create configmap distrilock-env --from-env-file=.env
+
+kl:
+	kubectl get pods -o name | xargs -n1 kubectl logs
 
 install-protoc:
 	sudo apt update
