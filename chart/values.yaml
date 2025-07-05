@@ -1,0 +1,7 @@
+redis:
+  replicaCount: 1
+verifier:
+  replicaCount: 1
+distrilock:
+  completions: 7
+  parallelism: 7 

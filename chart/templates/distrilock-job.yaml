@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: distrilock
+spec:
+  completions: {{ .Values.distrilock.completions }}
+  parallelism: {{ .Values.distrilock.parallelism }}
+  template:
+    metadata:
+      labels:
+        app: distrilock
+    spec:
+      containers:
+        - name: distrilock
+          image: axmz/distrilock:latest
+          envFrom:
+            - configMapRef:
+                name: distrilock-env
+      restartPolicy: Never
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: distrilock
+spec:
+  ports:
+    - port: 8080
+  selector:
+    app: distrilock 

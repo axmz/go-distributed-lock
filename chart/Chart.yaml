@@ -1,0 +1,4 @@
+apiVersion: v2
+name: go-distributed-lock
+description: A Helm chart for go-distributed-lock and its dependencies
+version: 0.1.0 

@@ -1,5 +1,3 @@
----
-# Source: go-distributed-lock/templates/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,9 +8,9 @@ data:
   VERIFIER_PORT: ":50051"
   VERIFIER_ADDR: "verifier:50051"
   LOCK_TYPE: "naive"
-  REPLICAS: "7"
+  REPLICAS: {{ .Values.distrilock.completions | quote }}
   ITERATIONS: "5000"
   BACKOFF_BASE: "0ms"
   MAX_JITTER: "0ms"
   LOCK_EXPIRY: "5s"
-  SIMULATE_WORK_TIME: "0ms"
+  SIMULATE_WORK_TIME: "0ms" 

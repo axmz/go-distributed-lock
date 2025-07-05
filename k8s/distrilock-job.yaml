@@ -1,10 +1,23 @@
+---
+# Source: go-distributed-lock/templates/distrilock-job.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: distrilock
+spec:
+  ports:
+    - port: 8080
+  selector:
+    app: distrilock
+---
+# Source: go-distributed-lock/templates/distrilock-job.yaml
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: distrilock
 spec:
-  completions: 5
-  parallelism: 5
+  completions: 7
+  parallelism: 7
   template:
     metadata:
       labels:
@@ -17,13 +30,3 @@ spec:
             - configMapRef:
                 name: distrilock-env
       restartPolicy: Never
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: distrilock
-spec:
-  ports:
-    - port: 8080
-  selector:
-    app: distrilock
