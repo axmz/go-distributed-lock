@@ -1,16 +1,17 @@
-Several demos of distributed lock using redis, redislock, redis cluster and kubernetes.
+# Distributed lock
+The idea is that multiple worker jobs (distrilock) will increase the counter in the Redis intermitently.
+Once all of them report, a quick check is made.
+If the counter matches the exepcted results, then there was no race condition.
 
-Can be deployed with docker compose or K8s 
+Several demos of distributed lock on different git branches.
+- SETNX + single Redis node + docker-compose: Requirement: docker-compose
+- Redislock + Redis cluster and k8s. Requirements: helm
 
+Tech used: grpc, k8s, helm, docker
+
+# Run
+Make changes to values.yml and then run.
 ```
-make build && make scale
+make run
 ```
 
-
-```
-make k8s-configmap
-make k8s-apply
-```
-
-# TODO
-Add ENV SCALE

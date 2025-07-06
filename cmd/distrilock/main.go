@@ -32,7 +32,7 @@ func backoffWithJitter(base time.Duration, maxJitter time.Duration) time.Duratio
 	return base + jitter
 }
 
-func redisLock(ctx context.Context, id string, rc *redis.Client, cfg config.Config) int64 {
+func redisLock(ctx context.Context, id string, rc redis.Cmdable, cfg config.Config) int64 {
 	locker := redislock.New(rc)
 	var lastSeen int64
 
@@ -67,43 +67,7 @@ func redisLock(ctx context.Context, id string, rc *redis.Client, cfg config.Conf
 	return lastSeen
 }
 
-func naiveRedisLock(ctx context.Context, id string, rc *redis.Client, cfg config.Config) int64 {
-	var lastSeen int64
 
-	for range cfg.Iterations {
-		// Try to acquire the lock, waiting until it's available
-		for {
-			ok, err := rc.SetNX(ctx, lockKey, id, cfg.LockExpiry).Result()
-			if err != nil {
-				log.Fatal(err)
-			}
-			if ok {
-				log.Printf("%v, Acquired the lock", id)
-				break // Acquired the lock
-			}
-			time.Sleep(backoffWithJitter(cfg.BackoffBase, cfg.MaxJitter))
-		}
-
-		// Critical section: safely increment the counter
-		val, err := rc.Incr(ctx, counterKey).Result()
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("%v, Incremented counter: %d", id, val)
-
-		// Simulate work
-		time.Sleep(cfg.SimulateWorkTime)
-
-		lastSeen = val
-		// Release the lock only if we still own it
-		v, err := rc.Get(ctx, lockKey).Result()
-		if err == nil && v == id {
-			log.Printf("%v, Release the lock: %d", id, val)
-			rc.Del(ctx, lockKey)
-		}
-	}
-	return lastSeen
-}
 
 func ConnectAfterVerifierReady(address string) (*grpc.ClientConn, error) {
 	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -143,12 +107,7 @@ func main() {
 
 	id := uuid.New().String()
 
-	var lastSeen int64
-	if cfg.LockType == "naive" {
-		lastSeen = naiveRedisLock(ctx, id, rc, cfg)
-	} else {
-		lastSeen = redisLock(ctx, id, rc, cfg)
-	}
+	lastSeen := redisLock(ctx, id, rc, cfg)
 
 	_, err = c.ReportFinal(ctx, &pb.FinalCount{Id: id, Value: lastSeen})
 	if err != nil {

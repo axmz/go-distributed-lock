@@ -8,9 +8,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func Init(addr string) *redis.Client {
-	client := redis.NewClient(&redis.Options{
-		Addr: addr,
+func Init(addr string) redis.Cmdable {
+	client := redis.NewClusterClient(&redis.ClusterOptions{
+		Addrs: []string{addr},
 	})
 
 	// Retry
@@ -19,10 +19,10 @@ func Init(addr string) *redis.Client {
 		if err == nil {
 			return client
 		}
-		log.Printf("waiting for redis at %s... (%d/10)", addr, i+1)
-		time.Sleep(1 * time.Second)
+		log.Printf("waiting for redis cluster at %s... (%d/10)", addr, i+1)
+		time.Sleep(2 * time.Second)
 	}
 
-	log.Fatalf("could not connect to redis at %s after 10 attempts", addr)
+	log.Fatalf("could not connect to redis cluster at %s after 10 attempts", addr)
 	return nil
 }

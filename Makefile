@@ -1,42 +1,45 @@
-.PHONY: build watch ka kd kc kl install-protoc ht hi hu
+.PHONY: run install cleanup-helm cleanup-namespace cleanup logs watch build-distrilock build-verifier build push-distrilock push-verifier push
 
-build:
-	docker compose build
+run: cleanup-helm cleanup-namespace install logs
 
 watch:
-	docker compose up --scale app=5 --watch
+	@echo "Following verifier logs in real-time..."
+	@echo "Press Ctrl+C to stop following logs"
+	@kubectl logs -f -l app=verifier -n distrilock-redis-cluster
 
-dev: build watch
+cleanup-helm:
+	@echo "Uninstalling Helm release..."
+	@helm uninstall distrilock --namespace distrilock-redis-cluster --ignore-not-found=true || true
 
-ka:
-	kubectl apply -f k8s/configmap.yaml
-	kubectl apply -f k8s/redis.yml
-	kubectl wait --for=condition=ready pod -l app=redis --timeout=60s
-	kubectl apply -f k8s/go-verifier.yml
-	kubectl wait --for=condition=ready pod -l app=verifier --timeout=60s
-	kubectl apply -f k8s/go-distrilock.yml
+cleanup-namespace:
+	@echo "Deleting namespace..."
+	@kubectl delete namespace distrilock-redis-cluster --ignore-not-found=true || true
 
-kd:
-	kubectl delete -f k8s/
+install:
+	@echo "Installing distrilock in distrilock-redis-cluster namespace..."
+	@helm install distrilock ./chart --namespace distrilock-redis-cluster --create-namespace --wait
 
-kc:
-	kubectl create configmap distrilock-env --from-env-file=.env
+logs:
+	@echo "Following verifier logs in real-time..."
+	@echo "Press Ctrl+C to stop following logs"
+	@echo "Waiting for verifier to be ready..."
+	@while ! kubectl logs -f -l app=verifier -n distrilock-redis-cluster 2>/dev/null; do \
+		echo "Verifier not ready yet, retrying in 1 second..."; \
+		sleep 1; \
+	done
 
-kl:
-	kubectl get pods -o name | xargs -n1 kubectl logs
+build: build-distrilock build-verifier
 
-install-protoc:
-	sudo apt update
-	sudo apt install -y protobuf-compiler
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-	export PATH="$$PATH:$(go env GOPATH)/bin"
+build-distrilock:
+	docker build -f Dockerfile.distrilock -t axmz/distrilock:cluster .
 
-hi:
-	helm install distrilock ./chart
+build-verifier:
+	docker build -f Dockerfile.verifier -t axmz/verifier:cluster .
 
-hu:
-	helm uninstall distrilock
+push: push-distrilock push-verifier
 
-ht:
-	helm template distrilock ./chart --output-dir ./temp && mv ./temp/go-distributed-lock/templates/* ./k8s/ && rm -rf ./temp
+push-distrilock:
+	docker push axmz/distrilock:cluster
+
+push-verifier:
+	docker push axmz/verifier:cluster

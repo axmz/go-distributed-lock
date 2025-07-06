@@ -1,18 +1,49 @@
+
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: distrilock
+  namespace: distrilock-redis-cluster
 spec:
   completions: {{ .Values.distrilock.completions }}
   parallelism: {{ .Values.distrilock.parallelism }}
   template:
     metadata:
+      annotations:
+        "helm.sh/hook": post-install
+        "helm.sh/hook-weight": "3"
+    metadata:
       labels:
         app: distrilock
     spec:
+      initContainers:
+        - name: wait-for-redis-cluster
+          image: redis:7-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Redis cluster to be ready..."
+              until redis-cli -h redis-cluster ping; do
+                echo "Waiting for Redis cluster..."
+                sleep 2
+              done
+              echo "Redis cluster is ready!"
+        - name: wait-for-verifier
+          image: busybox:1.35
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for verifier to be ready..."
+              until nc -z verifier 50051; do
+                echo "Waiting for verifier..."
+                sleep 2
+              done
+              echo "Verifier is ready!"
       containers:
         - name: distrilock
-          image: axmz/distrilock:latest
+          image: axmz/distrilock:cluster
           envFrom:
             - configMapRef:
                 name: distrilock-env
@@ -22,8 +53,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: distrilock
+  namespace: distrilock-redis-cluster
 spec:
   ports:
     - port: 8080
   selector:
-    app: distrilock 
+    app: distrilock
+ 

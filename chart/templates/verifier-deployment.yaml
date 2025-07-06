@@ -1,7 +1,12 @@
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: verifier
+  namespace: distrilock-redis-cluster
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "2"
 spec:
   replicas: {{ .Values.verifier.replicaCount }}
   selector:
@@ -12,9 +17,22 @@ spec:
       labels:
         app: verifier
     spec:
+      initContainers:
+        - name: wait-for-redis-cluster
+          image: redis:7-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Redis cluster to be ready..."
+              until redis-cli -h redis-cluster ping; do
+                echo "Waiting for Redis cluster..."
+                sleep 5
+              done
+              echo "Redis cluster is ready!"
       containers:
         - name: verifier
-          image: axmz/verifier:latest
+          image: axmz/verifier:cluster
           ports:
             - containerPort: 50051
           envFrom:
@@ -25,8 +43,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: verifier
+  namespace: distrilock-redis-cluster
 spec:
   ports:
     - port: 50051
   selector:
-    app: verifier 
+    app: verifier
+ 

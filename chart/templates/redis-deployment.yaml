@@ -1,29 +1,144 @@
+
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: redis
+  name: redis-cluster
+  namespace: distrilock-redis-cluster
 spec:
-  replicas: {{ .Values.redis.replicaCount }}
+  serviceName: redis-cluster-headless
+  replicas: {{ .Values.rediscluster.replicaCount }}
   selector:
     matchLabels:
-      app: redis
+      app: redis-cluster
   template:
     metadata:
       labels:
-        app: redis
+        app: redis-cluster
     spec:
       containers:
         - name: redis
           image: redis:7-alpine
           ports:
             - containerPort: 6379
+            - containerPort: 16379
+          command:
+            - redis-server
+            - --cluster-enabled
+            - "yes"
+            - --cluster-config-file
+            - nodes.conf
+            - --cluster-node-timeout
+            - "5000"
+            - --appendonly
+            - "yes"
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          env:
+            - name: REDIS_CLUSTER_CREATOR
+              value: "yes"
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          startupProbe:
+            tcpSocket:
+              port: 6379
+            failureThreshold: 30
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis
+  name: redis-cluster
+  namespace: distrilock-redis-cluster
 spec:
   ports:
     - port: 6379
+      targetPort: 6379
+      name: redis
+    - port: 16379
+      targetPort: 16379
+      name: cluster
   selector:
-    app: redis 
+    app: redis-cluster
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster-headless
+  namespace: distrilock-redis-cluster
+  labels:
+    app: redis-cluster
+spec:
+  ports:
+    - port: 6379
+      targetPort: 6379
+      name: redis
+    - port: 16379
+      targetPort: 16379
+      name: cluster
+  clusterIP: None
+  selector:
+    app: redis-cluster
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-cluster-init
+  namespace: distrilock-redis-cluster
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      containers:
+        - name: redis-cluster-init
+          image: redis:7-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Redis cluster pods to be ready..."
+              sleep 30
+              
+              # Wait for Redis nodes to be ready
+              until redis-cli -h redis-cluster-0.redis-cluster-headless ping; do
+                echo "Waiting for redis-cluster-0..."
+                sleep 5
+              done
+              
+              until redis-cli -h redis-cluster-1.redis-cluster-headless ping; do
+                echo "Waiting for redis-cluster-1..."
+                sleep 5
+              done
+              
+              until redis-cli -h redis-cluster-2.redis-cluster-headless ping; do
+                echo "Waiting for redis-cluster-2..."
+                sleep 5
+              done
+              
+              echo "All Redis nodes are ready!"
+              
+              # Create cluster
+              redis-cli --cluster create redis-cluster-0.redis-cluster-headless:6379 redis-cluster-1.redis-cluster-headless:6379 redis-cluster-2.redis-cluster-headless:6379 --cluster-replicas 0 --cluster-yes
+              
+              echo "Redis cluster initialized!"
+      restartPolicy: Never
+ 

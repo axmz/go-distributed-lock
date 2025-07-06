@@ -1,7 +1,21 @@
-redis:
-  replicaCount: 1
+
 verifier:
   replicaCount: 1
 distrilock:
   completions: 7
-  parallelism: 7 
+  parallelism: 7
+
+# Redis Cluster configuration
+rediscluster:
+  replicaCount: 3
+
+configmap:
+  ENVIRONMENT: "k8s"
+  REDIS_ADDR: "redis-cluster:6379"
+  VERIFIER_PORT: ":50051"
+  VERIFIER_ADDR: "verifier:50051"
+  ITERATIONS: "10000"
+  BACKOFF_BASE: "0ms"
+  MAX_JITTER: "0ms"
+  LOCK_EXPIRY: "5s"
+  SIMULATE_WORK_TIME: "0ms" 

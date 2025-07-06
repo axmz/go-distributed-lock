@@ -1,16 +1,19 @@
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: distrilock-env
+  namespace: distrilock-redis-cluster
 data:
-  ENVIRONMENT: "k8s"
-  REDIS_ADDR: "redis:6379"
-  VERIFIER_PORT: ":50051"
-  VERIFIER_ADDR: "verifier:50051"
-  LOCK_TYPE: "naive"
+  ENVIRONMENT: {{ .Values.configmap.ENVIRONMENT | quote }}
+  REDIS_ADDR: {{ .Values.configmap.REDIS_ADDR | quote }}
+  VERIFIER_PORT: {{ .Values.configmap.VERIFIER_PORT | quote }}
+  VERIFIER_ADDR: {{ .Values.configmap.VERIFIER_ADDR | quote }}
+  LOCK_TYPE: {{ .Values.configmap.LOCK_TYPE | quote }}
+  ITERATIONS: {{ .Values.configmap.ITERATIONS | quote }}
   REPLICAS: {{ .Values.distrilock.completions | quote }}
-  ITERATIONS: "5000"
-  BACKOFF_BASE: "0ms"
-  MAX_JITTER: "0ms"
-  LOCK_EXPIRY: "5s"
-  SIMULATE_WORK_TIME: "0ms" 
+  BACKOFF_BASE: {{ .Values.configmap.BACKOFF_BASE | quote }}
+  MAX_JITTER: {{ .Values.configmap.MAX_JITTER | quote }}
+  LOCK_EXPIRY: {{ .Values.configmap.LOCK_EXPIRY | quote }}
+  SIMULATE_WORK_TIME: {{ .Values.configmap.SIMULATE_WORK_TIME | quote }}
+ 

@@ -83,6 +83,7 @@ func main() {
 	// Calc Expected Counter Value
 	expected := cfg.Replicas * cfg.Iterations
 
+	// Compare results
 	fmt.Printf("Max reported: %d, Redis counter: %d, Expected counter: %d\n", maxVal, redisVal, expected)
 
 	if maxVal == redisVal && maxVal == expected {
