@@ -12,7 +12,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	pb "github.com/axmz/go-distributed-lock/proto/report"
-	"github.com/bsm/redislock"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -30,41 +29,6 @@ func backoffWithJitter(base time.Duration, maxJitter time.Duration) time.Duratio
 	}
 	jitter := time.Duration(rand.Int63n(int64(maxJitter)))
 	return base + jitter
-}
-
-func redisLock(ctx context.Context, id string, rc *redis.Client, cfg config.Config) int64 {
-	locker := redislock.New(rc)
-	var lastSeen int64
-
-	for range cfg.Iterations {
-		var lock *redislock.Lock
-		var err error
-
-		for {
-			lock, err = locker.Obtain(ctx, lockKey, cfg.LockExpiry, nil)
-			if err == redislock.ErrNotObtained {
-				time.Sleep(backoffWithJitter(cfg.BackoffBase, cfg.MaxJitter))
-				continue
-			} else if err != nil {
-				log.Fatalf("Could not obtain lock: %v", err)
-			}
-			break
-		}
-
-		val, err := rc.Incr(ctx, counterKey).Result()
-		if err != nil {
-			log.Fatalf("Could not increment counter: %v", err)
-		}
-
-		time.Sleep(cfg.SimulateWorkTime)
-
-		log.Printf("%v, Incremented counter: %d", id, val)
-		lastSeen = val
-
-		lock.Release(ctx)
-	}
-
-	return lastSeen
 }
 
 func naiveRedisLock(ctx context.Context, id string, rc *redis.Client, cfg config.Config) int64 {
@@ -143,12 +107,7 @@ func main() {
 
 	id := uuid.New().String()
 
-	var lastSeen int64
-	if cfg.LockType == "naive" {
-		lastSeen = naiveRedisLock(ctx, id, rc, cfg)
-	} else {
-		lastSeen = redisLock(ctx, id, rc, cfg)
-	}
+	lastSeen := naiveRedisLock(ctx, id, rc, cfg)
 
 	_, err = c.ReportFinal(ctx, &pb.FinalCount{Id: id, Value: lastSeen})
 	if err != nil {

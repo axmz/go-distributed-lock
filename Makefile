@@ -1,30 +1,15 @@
-.PHONY: build watch ka kd kc kl install-protoc ht hi hu
+.PHONY: build watch run install-protoc clean
 
+# Docker Compose commands
 build:
 	docker compose build
 
 watch:
 	docker compose up --scale app=5 --watch
 
-dev: build watch
+run: clean build watch
 
-ka:
-	kubectl apply -f k8s/configmap.yaml
-	kubectl apply -f k8s/redis.yml
-	kubectl wait --for=condition=ready pod -l app=redis --timeout=60s
-	kubectl apply -f k8s/go-verifier.yml
-	kubectl wait --for=condition=ready pod -l app=verifier --timeout=60s
-	kubectl apply -f k8s/go-distrilock.yml
-
-kd:
-	kubectl delete -f k8s/
-
-kc:
-	kubectl create configmap distrilock-env --from-env-file=.env
-
-kl:
-	kubectl get pods -o name | xargs -n1 kubectl logs
-
+# Development setup
 install-protoc:
 	sudo apt update
 	sudo apt install -y protobuf-compiler
@@ -32,11 +17,7 @@ install-protoc:
 	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 	export PATH="$$PATH:$(go env GOPATH)/bin"
 
-hi:
-	helm install distrilock ./chart
-
-hu:
-	helm uninstall distrilock
-
-ht:
-	helm template distrilock ./chart --output-dir ./temp && mv ./temp/go-distributed-lock/templates/* ./k8s/ && rm -rf ./temp
+# Cleanup
+clean:
+	docker compose down
+	docker compose down --volumes --remove-orphans
